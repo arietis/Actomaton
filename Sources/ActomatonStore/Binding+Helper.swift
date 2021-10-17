@@ -13,7 +13,11 @@ extension Binding
     {
         Binding<SubValue>(
             get: { get(self.wrappedValue) },
-            set: { self.wrappedValue = set(self.wrappedValue, $0) }
+            set: { value, transaction in
+                withTransaction(transaction) {
+                    self.wrappedValue = set(self.wrappedValue, value)
+                }
+            }
         )
     }
 
@@ -27,7 +31,11 @@ extension Binding
     {
         Binding<SubValue>(
             get: { self.wrappedValue[keyPath: keyPath] },
-            set: { self.wrappedValue[keyPath: keyPath] = $0 }
+            set: { value, transaction in
+                withTransaction(transaction) {
+                    self.wrappedValue[keyPath: keyPath] = value
+                }
+            }
         )
     }
 
@@ -40,7 +48,11 @@ extension Binding
 
         return Binding<SubValue>(
             get: { subValue },
-            set: { self.wrappedValue[keyPath: keyPath] = $0 }
+            set: { value, transaction in
+                withTransaction(transaction) {
+                    self.wrappedValue[keyPath: keyPath] = value
+                }
+            }
         )
     }
 
@@ -53,9 +65,11 @@ extension Binding
             get: {
                 casePath.extract(from: self.wrappedValue)
             },
-            set: { value in
+            set: { value, transaction in
                 if let value = value {
-                    self.wrappedValue = casePath.embed(value)
+                    withTransaction(transaction) {
+                        self.wrappedValue = casePath.embed(value)
+                    }
                 }
             }
         )
@@ -80,7 +94,11 @@ extension Binding
 
         return Binding<SubValue>(
             get: { subValue },
-            set: { self.wrappedValue[keyPath: keyPath] = $0 }
+            set: { value, transaction in
+                withTransaction(transaction) {
+                    self.wrappedValue[keyPath: keyPath] = value
+                }
+            }
         )
     }
 }

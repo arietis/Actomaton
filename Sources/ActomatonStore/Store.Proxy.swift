@@ -10,12 +10,12 @@ extension Store
         @Binding
         public private(set) var state: State
 
-        private let _send: (Action, TaskPriority?, _ tracksFeedbacks: Bool) -> Task<(), Never>?
+        private let _send: (Action, Transaction?, TaskPriority?, _ tracksFeedbacks: Bool) -> Task<(), Never>?
 
         /// Designated initializer with receiving `send` from single-source-of-truth `Store`.
         public init(
             state: Binding<State>,
-            send: @escaping (Action, TaskPriority?, _ tracksFeedbacks: Bool) -> Task<(), Never>?
+            send: @escaping (Action, Transaction?, TaskPriority?, _ tracksFeedbacks: Bool) -> Task<(), Never>?
         )
         {
             self._state = state
@@ -25,7 +25,7 @@ extension Store
         /// Initializer with simple `send`, mainly for mocking purpose.
         public init(state: Binding<State>, send: @escaping (Action) -> Void)
         {
-            self.init(state: state, send: { action, _, _ in
+            self.init(state: state, send: { action, _, _, _ in
                 send(action)
                 return nil
             })
@@ -46,11 +46,12 @@ extension Store
         @discardableResult
         public nonisolated func send(
             _ action: Action,
+            transaction: Transaction? = nil,
             priority: TaskPriority? = nil,
             tracksFeedbacks: Bool = false
         ) -> Task<(), Never>?
         {
-            self._send(action, priority, tracksFeedbacks)
+            self._send(action, transaction, priority, tracksFeedbacks)
         }
     }
 }
@@ -79,7 +80,7 @@ extension Store.Proxy
     public func contramap<Action2>(action f: @escaping (Action2) -> Action)
         -> Store<Action2, State>.Proxy
     {
-        .init(state: self.$state, send: { self.send(f($0), priority: $1, tracksFeedbacks: $2) })
+        .init(state: self.$state, send: { self.send(f($0), transaction: $1, priority: $2, tracksFeedbacks: $3) })
     }
 }
 
@@ -115,6 +116,10 @@ extension Store.Proxy
     }
 
     /// Indirect state-to-action conversion binding to create `Binding<SubState>`.
+    ///
+    /// - Note:
+    ///   Use `Binding.animation` or `Binding.transaction` after this method
+    ///   to attach `Transaction` onto `onChange`d `Action`.
     public func stateBinding<SubState>(
         get: @escaping (State) -> SubState,
         onChange: @escaping (SubState) -> Action?
@@ -124,9 +129,9 @@ extension Store.Proxy
             get: {
                 get(self.state)
             },
-            set: {
-                if let action = onChange($0) {
-                    self.send(action)
+            set: { state, transaction in
+                if let action = onChange(state) {
+                    self.send(action, transaction: transaction)
                 }
             }
         )

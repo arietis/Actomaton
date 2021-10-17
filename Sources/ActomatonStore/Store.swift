@@ -8,8 +8,13 @@ open class Store<Action, State>: ObservableObject
 {
     private let actomaton: Actomaton<BindableAction, State>
 
+    /// Actor that manages animation-transaction to be safely run after state is mutated asynchronously.
+    private let transactor: Transactor
+
     @Published
     public private(set) var state: State
+
+//    private var transaction: Transaction?
 
     private var cancellables: [AnyCancellable] = []
 
@@ -39,13 +44,28 @@ open class Store<Action, State>: ObservableObject
             environment: environment
         )
 
+        let transactor = Transactor()
+        self.transactor = transactor
+
         Task {
             let statePublisher = await self.actomaton.$state
 
             statePublisher
+                .flatMap { state in
+                    Future { promise in
+                        Task(priority: .high) {
+                            let transaction = await transactor.transaction
+                            promise(.success((state, transaction)))
+                        }
+                    }
+                }
                 .receive(on: DispatchQueue.main)
-                .assign(to: \.state, on: self)
-                .store(in: &cancellables)
+                .sink { [weak self] state, transaction in
+                    withTransaction(transaction ?? Transaction()) { [weak self] in
+                        self?.state = state
+                    }
+                }
+                .store(in: &self.cancellables)
         }
     }
 
@@ -65,10 +85,12 @@ open class Store<Action, State>: ObservableObject
 // To call these methods, use `proxy` instead.
 extension Store
 {
-    private nonisolated func send(_ action: Action, priority: TaskPriority? = nil, tracksFeedbacks: Bool) -> Task<(), Never>
+    private nonisolated func send(_ action: Action, transaction: Transaction? = nil, priority: TaskPriority? = nil, tracksFeedbacks: Bool) -> Task<(), Never>
     {
-        Task(priority: priority) {
-            await self.actomaton.send(.action(action), priority: priority, tracksFeedbacks: tracksFeedbacks)
+        Task(priority: priority) { [weak self] in
+            await self?.transactor.runTransaction(transaction) {
+                await self?.actomaton.send(.action(action), priority: priority, tracksFeedbacks: tracksFeedbacks)
+            }
         }
     }
 
@@ -78,9 +100,11 @@ extension Store
             get: {
                 self.state
             },
-            set: { newValue in
-                Task {
-                    await self.actomaton.send(.state(newValue))
+            set: { newValue, transaction in
+                Task { [weak self] in
+                    await self?.transactor.runTransaction(transaction) {
+                        await self?.actomaton.send(.state(newValue))
+                    }
                 }
             }
         )
@@ -111,5 +135,18 @@ private func lift<Action, State, Environment>(
             state = newState
             return .empty
         }
+    }
+}
+
+/// Actor that manages animation-transaction to be safely run after state is mutated asynchronously.
+private actor Transactor
+{
+    var transaction: Transaction?
+
+    func runTransaction(_ transaction: Transaction?, handle: () async -> Void) async
+    {
+        self.transaction = transaction
+        await handle()
+        self.transaction = nil
     }
 }
